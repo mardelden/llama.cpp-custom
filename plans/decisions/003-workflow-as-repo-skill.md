@@ -80,7 +80,7 @@ The rewrite was verified content-neutral by comparing tree hashes before and aft
   accordingly - it must now list only `plans/**` and `.claude/**`:
 
   ```bash
-  git diff --name-only upstream/master..master
+  git diff --name-only $(git merge-base upstream/master master)..master
   ```
 
   This is recorded in the skill itself and supersedes the `plans/`-only phrasing in `002`.

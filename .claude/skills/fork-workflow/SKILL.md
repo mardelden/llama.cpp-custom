@@ -20,7 +20,7 @@ Full rationale lives in `plans/decisions/`. This file is the operational summary
 git fetch upstream
 
 # sanity check: master must carry NOTHING but our local docs
-git diff --name-only upstream/master..master
+git diff --name-only $(git merge-base upstream/master master)..master
 #   expected: only plans/**, .claude/**, overlays/**/DEPLOY.md, DEPLOYMENT-BRANCHES.md
 #   anything else means work landed on master by mistake - move it to a branch first
 
@@ -47,6 +47,22 @@ does not use.
 Rebasing gives the local commits new SHAs, which `origin` no longer contains, so the push
 must overwrite. `--force-with-lease` aborts if `origin` moved since your last fetch, turning
 a silent overwrite into a visible error. Never use bare `--force`.
+
+### Why the check uses `merge-base`
+
+`git diff upstream/master..master` compares two trees, so it reports differences in
+**both** directions. The moment upstream advances, upstream's own commits appear in
+the output as if they were stray files on `master`. That is a false alarm, and a
+tripwire that cries wolf gets ignored - worse than no check at all.
+
+Diffing from the merge-base reports only what `master`'s own commits introduced:
+
+```bash
+git diff --name-only $(git merge-base upstream/master master)..master
+```
+
+Same reasoning as patch extraction below: always diff from the merge-base, never
+from a moving tip.
 
 ### The tripwire you gave up
 

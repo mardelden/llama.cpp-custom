@@ -114,7 +114,8 @@ branches and rely on apply order.
 
 ```bash
 git fetch upstream
-git diff --name-only upstream/master..master   # expect ONLY plans/, .claude/, this file
+git diff --name-only $(git merge-base upstream/master master)..master
+#   expect ONLY plans/, .claude/, overlays/**/DEPLOY.md, DEPLOYMENT-BRANCHES.md
 git switch master && git rebase upstream/master
 git push --force-with-lease origin master
 ```

@@ -60,7 +60,7 @@ committed to `master`. Rebasing gives that up - it will happily replay a stray c
 Substitute check before syncing:
 
 ```bash
-git diff --name-only upstream/master..master   # must list ONLY plans/ and .claude/
+git diff --name-only $(git merge-base upstream/master master)..master   # ONLY local docs
 ```
 
 (Superseded scope: `.claude/` was added in
@@ -78,7 +78,8 @@ this loop lives in `.claude/skills/fork-workflow/SKILL.md`.)
 ## Consequences
 
 - Syncing is `git fetch upstream && git switch master && git rebase upstream/master`.
-  Before syncing, verify `git diff --name-only upstream/master..master` lists only `plans/`.
+  Before syncing, verify
+  `git diff --name-only $(git merge-base upstream/master master)..master` lists only local docs.
 - Because `plans/` lives on `master`, the fork's own commits get new SHAs on every rebase.
   `origin` already holds the old SHAs, so each sync needs
   `git push --force-with-lease origin master`. Use `--force-with-lease`, never plain
@@ -88,7 +89,7 @@ this loop lives in `.claude/skills/fork-workflow/SKILL.md`.)
 
   ```bash
   git fetch upstream
-  git diff --name-only upstream/master..master   # sanity: ONLY plans/ and .claude/
+  git diff --name-only $(git merge-base upstream/master master)..master   # sanity: ONLY local docs
   git switch master && git rebase upstream/master
   git push --force-with-lease origin master
   ```
