@@ -3893,8 +3893,9 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
     ).set_env("LLAMA_ARG_LOG_FILE"));
     add_opt(common_arg(
         {"--log-prompts-dir"}, "PATH",
-        "Log requests and completions to directory, as <id>.req.json and <id>.res.<index>.json "
-        "(auto-created if not present; records contain full prompts, default: disabled)",
+        "Log requests and completions to directory as JSON, one file pair per request, "
+        "sharded by UTC date and hour (auto-created if not present; records contain full "
+        "prompts, default: disabled)",
         [](common_params & params, const std::string & value) {
             params.path_prompts_log_dir = value;
             std::error_code ec;

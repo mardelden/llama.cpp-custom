@@ -244,7 +244,7 @@ For the full list of features, please refer to [server's changelog](https://gith
 | `-sps, --slot-prompt-similarity SIMILARITY` | how much the prompt of a request must match the prompt of a slot in order to use that slot (default: 0.10, 0.0 = disabled) |
 | `--lora-init-without-apply` | load LoRA adapters without applying them (apply later via POST /lora-adapters) (default: disabled) |
 | `--sleep-idle-seconds SECONDS` | number of seconds of idleness after which the server will sleep (default: -1; -1 = disabled) |
-| `--log-prompts-dir PATH` | Log prompts to directory (auto-created if not present; only used for debugging, default: disabled) |
+| `--log-prompts-dir PATH` | Log requests and completions to directory as JSON, one file pair per request, sharded by UTC date and hour (auto-created if not present; records contain full prompts, default: disabled) |
 | `--spec-draft-hf, -hfd, -hfrd, --hf-repo-draft <user>/<model>[:quant]` | Same as --hf-repo, but for the draft model (default: unused)<br/>(env: LLAMA_ARG_SPEC_DRAFT_HF_REPO) |
 | `--spec-draft-threads, -td, --threads-draft N` | number of threads to use during generation (default: same as --threads) |
 | `--spec-draft-threads-batch, -tbd, --threads-batch-draft N` | number of threads to use during batch and prompt processing (default: same as --threads-draft) |
@@ -403,6 +403,41 @@ Recommended `--cors-origins` setting, depending on where the server runs:
 | Same machine | `--cors-origins localhost` (default once `--agent` is set) |
 
 Related flags: `--cors-origins`, `--cors-methods`, `--cors-headers`, `--cors-credentials` / `--no-cors-credentials`. Background and rationale: [#25655](https://github.com/ggml-org/llama.cpp/pull/25655).
+
+### Request logging
+
+`--log-prompts-dir PATH` records every completion request and its result as JSON, for
+debugging and offline analysis. Disabled unless the flag is passed.
+
+Each request writes two files, named after the completion id that is also returned to
+the client as `id`, sharded by UTC date and hour:
+
+```
+PATH/YYYY-MM-DD/HH/<completion_id>.req.json          written before inference starts
+PATH/YYYY-MM-DD/HH/<completion_id>.res.<index>.json  written when the request finishes
+```
+
+The `.req.json` holds the request as the server resolved it - the prompt after chat
+template rendering, sampling parameters, tools, and any additional fields sent by the
+client. The `.res.json` holds the completion, the parsed message including reasoning
+content and tool calls, token counts including cache reuse, the stop reason, and
+timings. Both records have the same shape regardless of endpoint or streaming mode.
+
+`<index>` is `0` for a normal request. A request asking for several completions
+(`n > 1`) writes one `.res.<index>.json` per completion, all sharing one `.req.json`.
+The shard is chosen when the request arrives and reused for its result, so a request
+that crosses an hour boundary keeps both files in one directory.
+
+Files are written once and never reopened, so a truncated record is detectable as
+invalid JSON, and a `.req.json` with no matching `.res.json` means the request did not
+complete. Write failures are logged and ignored: logging never blocks or fails a
+request.
+
+**These records contain complete prompts**, including system prompts and anything
+else in the context. The directory is created `0700` and records `0600`. There is no
+rotation or size limit - the directory grows until something else removes files, and
+because the rendered prompt is logged in full, a multi-turn conversation re-records
+its whole history on every turn.
 
 ## Build
 
