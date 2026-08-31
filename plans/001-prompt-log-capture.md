@@ -1,8 +1,9 @@
 # Plan: Capture full request and completion records in the prompt log
 
-**Status:** Proposed
-**Date:** 2026-08-30
+**Status:** Implemented
+**Date:** 2026-08-30 (implemented 2026-08-31)
 **Snapshot:** `9723942ad`
+**Branch:** `feat/prompt-log-capture` - see `overlays/prompt-log-capture/DEPLOY.md`
 **Requested by:** agent-ledger team, via
 `/Users/mardel/src/agent-ledger/plans/handovers/reply-inference-prompt-log-capture.md`
 
@@ -183,6 +184,48 @@ partial path.
   independent of cache reuse. The handover is explicit that the archiver will never delete
   source data, so bounding growth stays on this side. Measure bytes/hour under real load
   before enabling continuously.
+
+## Outcome
+
+Implemented on `feat/prompt-log-capture`. Six files, all under `common/arg.cpp` and
+`tools/server/`. It landed close to the plan, with three changes worth recording.
+
+**Sharded into `YYYY-MM-DD/HH/` directories,** which the plan did not call for. Two
+files per request in one flat directory means roughly 1.7M files a day at 10 req/s,
+and the agent tailing it would have to enumerate all of them on every pass. The shard
+is resolved once per request and reused for the completion, so a request crossing an
+hour boundary keeps its pair together - computing it per write would have split them.
+
+**A dedicated `to_json_log()` rather than reusing `to_json()`.** The existing
+serialiser changes shape with `res_type`, stream mode and a client-supplied
+`response_fields`, which breaks the stable-layout requirement.
+
+**Directory modes set on the shard and its parent, not just the leaf.**
+`create_directories` leaves intermediate directories on the umask, so the date
+directory came out `0755` under a `0700` root. Contained today, since traversal needs
+execute on every component, but it becomes real exposure the moment the root is
+relaxed to admit the archiver's user.
+
+### Verified
+
+Built and exercised against `stories260K`: OpenAI streaming and non-streaming,
+Anthropic `/v1/messages` streaming, and `n=2` parallel completions. All records parse,
+pair by id, land `0600` under `0700` directories, and shard on UTC rather than local
+time. Not yet run on Linux, CUDA, production models, or real concurrency.
+
+**One defect was found by running it, not by review.** In streaming mode the final
+result carries only the last delta, so reading `content` directly recorded an empty
+completion for every streamed request. Compilation would never have caught it, and it
+would have produced a useless archive for exactly the traffic pattern that matters.
+`to_json_log()` falls back to the accumulated message content.
+
+### Measurement worth keeping
+
+Compressing a completed hour as a single stream measured about **10x smaller** than
+compressing the same records individually (`zstd --long`, simulated 20-turn traffic).
+Every turn re-logs the whole conversation, and a long-window compressor deduplicates
+that; per-file compression cannot see across files. This does not change the on-disk
+format - it is an argument for compacting completed hours, never the live one.
 
 ## Open Questions
 
