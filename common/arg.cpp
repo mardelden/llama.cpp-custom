@@ -3893,13 +3893,21 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
     ).set_env("LLAMA_ARG_LOG_FILE"));
     add_opt(common_arg(
         {"--log-prompts-dir"}, "PATH",
-        "Log prompts to directory (auto-created if not present; only used for debugging, default: disabled)",
+        "Log requests and completions to directory, as <id>.req.json and <id>.res.<index>.json "
+        "(auto-created if not present; records contain full prompts, default: disabled)",
         [](common_params & params, const std::string & value) {
             params.path_prompts_log_dir = value;
             std::error_code ec;
             std::filesystem::create_directories(value, ec);
             if (ec) {
                 fprintf(stderr, "warning: failed to create prompts-log-dir '%s': %s\n", value.c_str(), ec.message().c_str());
+                return;
+            }
+            // records hold fully assembled prompts, do not leave the mode to umask
+            std::filesystem::permissions(value, std::filesystem::perms::owner_all,
+                std::filesystem::perm_options::replace, ec);
+            if (ec) {
+                fprintf(stderr, "warning: failed to set permissions on prompts-log-dir '%s': %s\n", value.c_str(), ec.message().c_str());
             }
         }
     ).set_examples({LLAMA_EXAMPLE_SERVER, LLAMA_EXAMPLE_CLI}));

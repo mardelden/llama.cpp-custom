@@ -362,6 +362,35 @@ json server_task_result_cmpl_final::to_json_non_oaicompat() {
     return response_fields.empty() ? res : json_get_nested_values(response_fields, res);
 }
 
+json server_task_result_cmpl_final::to_json_log() {
+    // in stream mode the final result carries only the last delta, the accumulated text
+    // lives on the parsed message - keep this field populated the same way in both modes
+    const std::string & full_content = content.empty() ? oaicompat_msg.content : content;
+
+    json res = json {
+        {"index",                  index},
+        {"content",                full_content},
+        {"model",                  oaicompat_model},
+        {"prompt",                 prompt},
+        {"tokens_predicted",       n_decoded},
+        {"tokens_evaluated",       n_prompt_tokens},
+        {"tokens_cached",          n_tokens_cached},
+        {"tokens_prompt_cache",    n_prompt_tokens_cache},
+        {"generation_settings",    generation_params.to_json()},
+        {"truncated",              truncated},
+        {"stop_type",              stop_type_to_str(stop)},
+        {"stopping_word",          stopping_word},
+        {"timings",                stats.to_json()},
+    };
+
+    // reasoning and tool calls live on the parsed message, not on content
+    if (!oaicompat_msg.empty()) {
+        res["message"] = oaicompat_msg.to_json_oaicompat();
+    }
+
+    return res;
+}
+
 json server_task_result_cmpl_final::usage_json_oaicompat() {
     return json {
         {"completion_tokens", n_decoded},

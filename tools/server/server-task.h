@@ -373,6 +373,10 @@ struct server_task_result_cmpl_final : server_task_result {
 
     json to_json_non_oaicompat();
 
+    // archival record for --log-prompts-dir
+    // shape does not depend on res_type, stream mode or response_fields
+    json to_json_log();
+
     json usage_json_oaicompat();
 
     json to_json_oaicompat();

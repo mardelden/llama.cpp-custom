@@ -4227,6 +4227,36 @@ void server_context::set_state_callback(server_state_callback_t callback) {
 // server_routes
 //
 
+// write one record of the prompt log, as a complete JSON document
+// files are write-once and never reopened, so a torn write is detectable as invalid JSON
+// failures are logged and ignored - capture must never break serving
+static void write_prompt_log(const std::string & dir, const std::string & name, const json & body) {
+    const auto path = std::filesystem::path(dir) / name;
+
+    std::ofstream f(path, std::ios::binary);
+    if (!f) {
+        SRV_ERR("failed to create %s\n", path.string().c_str());
+        return;
+    }
+
+    f << body.dump();
+    f.close();
+
+    if (!f) {
+        SRV_ERR("failed to write %s\n", path.string().c_str());
+        return;
+    }
+
+    // these records hold fully assembled prompts, keep them owner-only
+    std::error_code ec;
+    std::filesystem::permissions(path,
+        std::filesystem::perms::owner_read | std::filesystem::perms::owner_write,
+        std::filesystem::perm_options::replace, ec);
+    if (ec) {
+        SRV_ERR("failed to set permissions on %s: %s\n", path.string().c_str(), ec.message().c_str());
+    }
+}
+
 std::unique_ptr<server_res_generator> server_routes::handle_completions_impl(
             const server_http_req & req,
             server_task_type type,
@@ -4244,6 +4274,28 @@ std::unique_ptr<server_res_generator> server_routes::handle_completions_impl(
 
     int32_t sse_ping_interval = params.sse_ping_interval;
 
+    // paired with the .req.json record written below; a final result exists in both
+    // streaming and non-streaming mode, so one seam covers both
+    // the index suffix keeps sibling completions apart when n_cmpl > 1
+    auto log_final_result = [dir = params.path_prompts_log_dir, completion_id](server_task_result * result) {
+        if (dir.empty()) {
+            return;
+        }
+
+        auto * final_result = dynamic_cast<server_task_result_cmpl_final *>(result);
+        if (final_result == nullptr) {
+            return;
+        }
+
+        write_prompt_log(dir,
+            string_format("%s.res.%zu.json", completion_id.c_str(), final_result->index),
+            json {
+                {"id",        completion_id},
+                {"timestamp", ggml_time_ms()},
+                {"response",  final_result->to_json_log()},
+            });
+    };
+
     try {
         std::vector<server_task> tasks;
 
@@ -4252,13 +4304,14 @@ std::unique_ptr<server_res_generator> server_routes::handle_completions_impl(
         //SRV_DBG("Prompt: %s\n", prompt.is_string() ? prompt.get<std::string>().c_str() : prompt.dump(2).c_str());
 
         if (!params.path_prompts_log_dir.empty()) {
-            const auto file_path = std::filesystem::path(params.path_prompts_log_dir) / string_format("%012" PRId64 ".txt", ggml_time_ms());
-            std::ofstream f(file_path);
-            if (f) {
-                f << (prompt.is_string() ? prompt.get<std::string>().c_str() : prompt.dump(2).c_str());
-            } else {
-                SRV_ERR("failed to create %s\n", file_path.string().c_str());
-            }
+            // data holds the rendered prompt plus the whole request envelope: sampling
+            // params, tools, and any client fields kept by the oaicompat parser
+            write_prompt_log(params.path_prompts_log_dir, completion_id + ".req.json", json {
+                {"id",         completion_id},
+                {"timestamp",  ggml_time_ms()},
+                {"model",      meta->model_name},
+                {"request",    data},
+            });
         }
 
         // process prompt
@@ -4332,6 +4385,7 @@ std::unique_ptr<server_res_generator> server_routes::handle_completions_impl(
             json arr = json::array();
             for (auto & res : all_results.results) {
                 GGML_ASSERT(dynamic_cast<server_task_result_cmpl_final*>(res.get()) != nullptr);
+                log_final_result(res.get());
                 arr.push_back(res->to_json());
             }
             GGML_ASSERT(!arr.empty() && "empty results");
@@ -4370,6 +4424,9 @@ std::unique_ptr<server_res_generator> server_routes::handle_completions_impl(
             dynamic_cast<server_task_result_cmpl_final*>  (first_result.get()) != nullptr
         );
 
+        // a single-chunk response can arrive final on the first result
+        log_final_result(first_result.get());
+
         // next responses are streamed
         // to be sent immediately
         json first_result_json = first_result->to_json();
@@ -4384,7 +4441,7 @@ std::unique_ptr<server_res_generator> server_routes::handle_completions_impl(
         }
         res->status = 200;
         res->content_type = "text/event-stream";
-        res->set_next([res_this = res.get(), res_type, sse_ping_interval](std::string & output) -> bool {
+        res->set_next([res_this = res.get(), res_type, sse_ping_interval, log_final_result](std::string & output) -> bool {
             static auto format_error = [](task_response_type res_type, const json & res_json) {
                 if (res_type == TASK_RESPONSE_TYPE_ANTHROPIC) {
                     return format_anthropic_sse({
@@ -4469,6 +4526,7 @@ std::unique_ptr<server_res_generator> server_routes::handle_completions_impl(
                         dynamic_cast<server_task_result_cmpl_partial*>(result.get()) != nullptr
                         || dynamic_cast<server_task_result_cmpl_final*>(result.get()) != nullptr
                     );
+                    log_final_result(result.get());
                     json res_json = result->to_json();
                     if (res_type == TASK_RESPONSE_TYPE_ANTHROPIC) {
                         output = format_anthropic_sse(res_json);
