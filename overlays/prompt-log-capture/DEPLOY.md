@@ -257,11 +257,34 @@ reqs=$(find /var/log/llama-prompts -name '*.req.json' | wc -l)
 echo "$(( bytes / reqs )) KB per request, over $reqs requests"
 ```
 
-**Report the file count and `df -i` output, not only the byte total.** Each request
-writes two files, so a host serving 10 req/s creates about 1.7M files a day. On ext4
-the inode count is fixed at mkfs time and can run out well before the disk is full;
-XFS allocates them dynamically and is less exposed. Which of those you are on
-changes the retention answer, so we need the number.
+### Sizing, for the reported target
+
+You reported **ext4 with 6,553,600 inodes**. At ext4's default ratio of one inode per
+16 KiB that implies a **100 GiB** filesystem, which settles the question:
+
+**Space runs out long before inodes do.** The crossover is 32 KB per request pair -
+below that inodes bind first, above it space does. These records are far above it.
+
+A request pair costs roughly **twice the conversation size**, plus about 2 KB. The
+request record deliberately holds both the wire message array and the rendered prompt
+(both were asked for), and they are near-identical in size.
+
+| rendered prompt | pair on disk | requests before full | at 1 req/s | at 10 req/s |
+|---|---|---|---|---|
+| 64 KB | 0.1 MB | 806,596 | 224 h | 22 h |
+| 256 KB | 0.5 MB | 204,003 | 57 h | 5.7 h |
+| 575 KB | 1.1 MB | 91,022 | 25 h | **2.5 h** |
+| 1 MB | 2.0 MB | 51,150 | 14 h | 1.4 h |
+
+The inode ceiling is 3.28M pairs, which at any realistic rate you will never reach -
+you will fill the disk first.
+
+**For a one-hour run this is fine**, at any of the rates above. Set the quota anyway:
+the failure mode without one is a full filesystem, and if that filesystem is shared
+with anything else, you take that out too. It is the reason for the dedicated volume.
+
+Still worth reporting back: actual bytes per request at your prompt sizes, and the
+request count. `df -i` is no longer interesting given the above.
 
 and hand over **two or three sample file pairs** (a `.req.json` and its matching
 `.res.<index>.json`). Sanitise the content if needed - the shape matters more than
