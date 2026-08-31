@@ -13,8 +13,8 @@ after the current millisecond. This overlay writes the full request envelope and
 the completion, as two JSON documents keyed on the completion id.
 
 ```
-<completion_id>.req.json          written before the task is dispatched
-<completion_id>.res.<index>.json  written when the task finishes
+<log-dir>/YYYY-MM-DD/HH/<completion_id>.req.json          before the task is dispatched
+<log-dir>/YYYY-MM-DD/HH/<completion_id>.res.<index>.json  when the task finishes
 ```
 
 ## Why
@@ -74,6 +74,10 @@ the existing `to_json()`, whose output changes with all three.
 - **Truncation is self-detecting** - a torn write is invalid JSON.
 - **Content-free filenames.** The id is server-generated; nothing user-derived
   reaches a path, since paths reach object keys and logs.
+- **Sharded by UTC date and hour**, resolved once per request and reused for the
+  completion record, so a request crossing an hour boundary keeps its pair in one
+  directory. Bounds directory size to one hour of traffic, so enumeration cost does
+  not grow with how long capture has run.
 - **Failure is soft.** A write error is logged and ignored; capture never breaks
   serving. A full disk degrades to no-capture, not no-inference - provided the
   directory is on its own filesystem.
