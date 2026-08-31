@@ -4227,10 +4227,47 @@ void server_context::set_state_callback(server_state_callback_t callback) {
 // server_routes
 //
 
+// UTC shard for the prompt log, as YYYY-MM-DD/HH
+// keeps any single directory small enough to enumerate cheaply, and partitions on UTC so
+// the layout does not shift with host timezone
+// computed once per request, not per write, so a request spanning an hour boundary keeps
+// its .req and .res in the same directory
+static std::string prompt_log_shard() {
+    const std::time_t t = std::time(nullptr);
+
+    std::tm tm = {};
+#ifdef _WIN32
+    gmtime_s(&tm, &t);
+#else
+    gmtime_r(&t, &tm);
+#endif
+
+    char buf[32];
+    if (strftime(buf, sizeof(buf), "%Y-%m-%d/%H", &tm) == 0) {
+        return "unknown";
+    }
+
+    return buf;
+}
+
 // write one record of the prompt log, as a complete JSON document
 // files are write-once and never reopened, so a torn write is detectable as invalid JSON
 // failures are logged and ignored - capture must never break serving
 static void write_prompt_log(const std::string & dir, const std::string & name, const json & body) {
+    std::error_code ec;
+    if (std::filesystem::create_directories(dir, ec)) {
+        // create_directories leaves intermediate dirs on the umask, so set the shard and
+        // its parent explicitly - do not rely on the root mode alone to contain the tree
+        const std::filesystem::path shard = dir;
+        std::filesystem::permissions(shard, std::filesystem::perms::owner_all,
+            std::filesystem::perm_options::replace, ec);
+        std::filesystem::permissions(shard.parent_path(), std::filesystem::perms::owner_all,
+            std::filesystem::perm_options::replace, ec);
+    } else if (ec) {
+        SRV_ERR("failed to create %s: %s\n", dir.c_str(), ec.message().c_str());
+        return;
+    }
+
     const auto path = std::filesystem::path(dir) / name;
 
     std::ofstream f(path, std::ios::binary);
@@ -4248,7 +4285,6 @@ static void write_prompt_log(const std::string & dir, const std::string & name, 
     }
 
     // these records hold fully assembled prompts, keep them owner-only
-    std::error_code ec;
     std::filesystem::permissions(path,
         std::filesystem::perms::owner_read | std::filesystem::perms::owner_write,
         std::filesystem::perm_options::replace, ec);
@@ -4274,10 +4310,16 @@ std::unique_ptr<server_res_generator> server_routes::handle_completions_impl(
 
     int32_t sse_ping_interval = params.sse_ping_interval;
 
+    // resolve the shard once, so a request that crosses an hour boundary still writes its
+    // .res next to its .req
+    const std::string prompts_log_dir = params.path_prompts_log_dir.empty()
+        ? std::string()
+        : (std::filesystem::path(params.path_prompts_log_dir) / prompt_log_shard()).string();
+
     // paired with the .req.json record written below; a final result exists in both
     // streaming and non-streaming mode, so one seam covers both
     // the index suffix keeps sibling completions apart when n_cmpl > 1
-    auto log_final_result = [dir = params.path_prompts_log_dir, completion_id](server_task_result * result) {
+    auto log_final_result = [dir = prompts_log_dir, completion_id](server_task_result * result) {
         if (dir.empty()) {
             return;
         }
@@ -4303,10 +4345,10 @@ std::unique_ptr<server_res_generator> server_routes::handle_completions_impl(
         // TODO: this log can become very long, put it behind a flag or think about a more compact format
         //SRV_DBG("Prompt: %s\n", prompt.is_string() ? prompt.get<std::string>().c_str() : prompt.dump(2).c_str());
 
-        if (!params.path_prompts_log_dir.empty()) {
+        if (!prompts_log_dir.empty()) {
             // data holds the rendered prompt plus the whole request envelope: sampling
             // params, tools, and any client fields kept by the oaicompat parser
-            write_prompt_log(params.path_prompts_log_dir, completion_id + ".req.json", json {
+            write_prompt_log(prompts_log_dir, completion_id + ".req.json", json {
                 {"id",         completion_id},
                 {"timestamp",  ggml_time_ms()},
                 {"model",      meta->model_name},
