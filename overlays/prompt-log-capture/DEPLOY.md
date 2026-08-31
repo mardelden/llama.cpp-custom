@@ -32,9 +32,14 @@ This overlay changes it to record the full request **and** the completion, as tw
 JSON documents per request, named after the completion id:
 
 ```
-chatcmpl-<random>.req.json          written before inference starts
-chatcmpl-<random>.res.<index>.json  written when the request finishes
+<log-dir>/YYYY-MM-DD/HH/chatcmpl-<random>.req.json          before inference starts
+<log-dir>/YYYY-MM-DD/HH/chatcmpl-<random>.res.<index>.json  when the request finishes
 ```
+
+Records are sharded into UTC date and hour directories. The shard is chosen when
+the request arrives and reused for its completion, so a request that crosses an
+hour boundary still writes both files into the same directory - you never have to
+look in two places to find a pair.
 
 It also fixes a real bug in the stock version: two requests arriving in the same
 millisecond resolved to the same filename, and the second silently overwrote the
@@ -208,6 +213,11 @@ The shape is the same regardless of which endpoint served the request
   mid-flight. That is unambiguous, not corruption.
 - **Filenames contain no user data.** Ids are server-generated, so paths are safe
   to put in logs and object keys.
+- **Directories stay small.** One hour of traffic each, so whatever reads this
+  directory does not get slower the longer capture has been running.
+
+Every directory in the tree is `0700` and every record `0600`, set explicitly
+rather than left to umask.
 
 ---
 
@@ -232,13 +242,26 @@ is managed by hand. Do not rely on remembering.
 Then report back:
 
 ```bash
-# how much, and how fast
+# size
 du -sh /var/log/llama-prompts
-ls /var/log/llama-prompts | wc -l
+
+# file count - report this, not just bytes
+find /var/log/llama-prompts -type f | wc -l
+
+# inode headroom on that filesystem
+df -i /var/log/llama-prompts
 
 # bytes per request
-echo $(( $(du -sb /var/log/llama-prompts | cut -f1) / $(ls /var/log/llama-prompts/*.req.json | wc -l) ))
+bytes=$(du -sk /var/log/llama-prompts | cut -f1)
+reqs=$(find /var/log/llama-prompts -name '*.req.json' | wc -l)
+echo "$(( bytes / reqs )) KB per request, over $reqs requests"
 ```
+
+**Report the file count and `df -i` output, not only the byte total.** Each request
+writes two files, so a host serving 10 req/s creates about 1.7M files a day. On ext4
+the inode count is fixed at mkfs time and can run out well before the disk is full;
+XFS allocates them dynamically and is less exposed. Which of those you are on
+changes the retention answer, so we need the number.
 
 and hand over **two or three sample file pairs** (a `.req.json` and its matching
 `.res.<index>.json`). Sanitise the content if needed - the shape matters more than
@@ -266,29 +289,29 @@ permanently.
 After the first request:
 
 ```bash
-ls -la /var/log/llama-prompts/
+find /var/log/llama-prompts -type d -exec ls -ld {} \;
 ```
 
-Expect the directory `drwx------`, files `-rw-------`, and files in pairs sharing
-an id stem.
+Expect every directory `drwx------`, records `-rw-------`, laid out as
+`YYYY-MM-DD/HH/`, with files in pairs sharing an id stem.
 
 ```bash
 # every record is valid JSON
-for f in /var/log/llama-prompts/*.json; do
+find /var/log/llama-prompts -name '*.json' | while read -r f; do
   python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$f" || echo "INVALID: $f"
 done
 
-# every request has at least one response
-for r in /var/log/llama-prompts/*.req.json; do
-  id=$(basename "$r" .req.json)
-  n=$(ls "/var/log/llama-prompts/$id".res.*.json 2>/dev/null | wc -l)
+# every request has at least one response (pairs share a directory)
+find /var/log/llama-prompts -name '*.req.json' | while read -r r; do
+  d=$(dirname "$r"); id=$(basename "$r" .req.json)
+  n=$(ls "$d/$id".res.*.json 2>/dev/null | wc -l)
   [ "$n" -eq 0 ] && echo "UNPAIRED: $id"
 done
 
 # completions are actually populated
 python3 - <<'PY'
 import json, glob
-for f in sorted(glob.glob('/var/log/llama-prompts/*.res.*.json')):
+for f in sorted(glob.glob('/var/log/llama-prompts/*/*/*.res.*.json')):
     d = json.load(open(f))['response']
     print(f.split('/')[-1], '->', repr(d['content'][:60]))
 PY
@@ -326,6 +349,18 @@ on this.
   If you add a sweep: **never delete a `.req.json` whose `.res` has not landed.** A
   slow request legitimately leaves one sitting alone for minutes. Prune on the
   `.res` file and remove its `.req` sibling, rather than ageing both independently.
+
+  The hour directories make this easier - an hour directory two hours old contains
+  no in-flight requests, so it can be removed wholesale without inspecting pairs.
+  Prune whole hours rather than individual files, and the pairing hazard disappears.
+
+  If disk pressure ever becomes the binding constraint, compressing a *completed
+  hour directory as a single stream* is worth far more than compressing files
+  individually. Measured on simulated multi-turn traffic: `zstd --long` over one
+  concatenated stream was about **10x smaller** than the sum of the same records
+  compressed separately, because every turn re-logs the whole conversation and a
+  long-window compressor can deduplicate that. Per-file compression cannot see
+  across files. Do this on completed hours only, never the current one.
 
   Whatever window you choose, declare it explicitly - the archive side needs to
   alert when its lag approaches your deletion window. A retention policy and a
