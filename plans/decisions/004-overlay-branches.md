@@ -86,12 +86,43 @@ a stock `upstream/master`.
 | **Root-level per-branch description** | Simple to find | Every overlay branch would write the same root path with different content, colliding as soon as two are composed | Directly breaks independent applicability |
 | **Branch from `upstream/master`, index from `master`** | Patches contain only code with no path scoping needed; overlay docs are disjoint by construction; catalogue sits where consumers land | Branches lack `plans/` in their working tree | **Chosen** |
 
+## Amendment (same day): deploy notes live on `master`
+
+The first deploy note was written to `overlays/prompt-log-capture/DEPLOY.md` **on
+the overlay branch**, by analogy with the manifest. That was wrong, and it showed
+up immediately: asked for the note's path, the answer was a path that did not
+exist on disk, because the working tree was on `master`.
+
+A deploy note's audience is the team building and running the binary. They do not
+check out the overlay branch, and a note reachable only from that branch is
+findable only by someone who already knows the branch name - which is the thing
+they are trying to look up.
+
+So the two documents split by audience and lifetime:
+
+| File | Lives on | Why |
+|---|---|---|
+| `overlays/<name>/README.md` | the overlay branch | Describes the patch. Updated alongside the code, so it must travel with it. |
+| `overlays/<name>/DEPLOY.md` | `master` | Describes how to ship and operate the result. Its audience never checks out the branch. |
+
+This does not reintroduce the collision hazard that rules out root-level
+per-branch files. That hazard is two overlay branches claiming the same path and
+colliding when composed. Deploy notes sit in per-name directories, and `master` is
+never composed into a stock tree at all.
+
+It also removes a footgun: a deploy note on `master` is structurally incapable of
+reaching a stock tree, rather than depending on whoever extracts the patch to
+remember the `':(exclude)overlays/'` pathspec.
+
 ## Consequences
 
 - Overlay branches do not contain `plans/`. Design rationale is read from
   `master`; the operational manifest travels with the branch in `overlays/`.
 - `DEPLOYMENT-BRANCHES.md` is the entry point for anyone consuming this fork. It
   is an index; the per-set manifest wins where they disagree.
+- `master` now carries `overlays/<name>/DEPLOY.md` as well. The pre-sync path check
+  widens accordingly, to `plans/**`, `.claude/**`, `overlays/**/DEPLOY.md` and
+  `DEPLOYMENT-BRANCHES.md`.
 - Adding a second overlay requires re-checking that the branches compose - both
   the file-overlap check and an actual sequential `git apply`. Trivially true
   with one branch; not thereafter.

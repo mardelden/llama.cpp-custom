@@ -17,10 +17,12 @@ branch and is updated alongside the code.
 
 | Branch | Scope | Activation | Rebuild? | Manifest | Deploy note |
 |---|---|---|---|---|---|
-| `feat/prompt-log-capture` | fleet-wide, inert unless activated | `--log-prompts-dir PATH` (off by default) | **yes** - C++ | [README](https://github.com/mardelden/llama.cpp-custom/blob/feat/prompt-log-capture/overlays/prompt-log-capture/README.md) | [DEPLOY](https://github.com/mardelden/llama.cpp-custom/blob/feat/prompt-log-capture/overlays/prompt-log-capture/DEPLOY.md) |
+| `feat/prompt-log-capture` | fleet-wide, inert unless activated | `--log-prompts-dir PATH` (off by default) | **yes** - C++ | [manifest](https://github.com/mardelden/llama.cpp-custom/blob/feat/prompt-log-capture/overlays/prompt-log-capture/README.md) (on branch) | [`overlays/prompt-log-capture/DEPLOY.md`](overlays/prompt-log-capture/DEPLOY.md) |
 
-**Deploying?** Read the deploy note for the branch you are shipping. It is written
-to stand alone - you do not need this file or anything else in the fork.
+**Deploying?** Read the deploy note for the branch you are shipping. Deploy notes
+live here on `master`, under `overlays/<name>/DEPLOY.md`, so you can find one
+without knowing which branch it belongs to or checking anything out. Each is
+written to stand alone - you do not need this file or anything else in the fork.
 
 ### `feat/prompt-log-capture`
 
@@ -46,6 +48,18 @@ truncated the first. That part is genuinely upstreamable on its own and could be
 split from the record-format change to keep the carried surface smaller.
 
 ## Working with overlays
+
+### Where documentation lives
+
+| File | Lives on | Why |
+|---|---|---|
+| `DEPLOYMENT-BRANCHES.md` | `master` | The index. Where consumers land. |
+| `overlays/<name>/DEPLOY.md` | `master` | How to build, ship and operate the overlay. Its audience never checks out the branch, and it must never reach a stock tree. |
+| `overlays/<name>/README.md` | the overlay branch | The patch manifest. Describes the change itself and is updated alongside the code, so it travels with it. |
+| `plans/`, `.claude/` | `master` | Design rationale and agent instructions. |
+
+Deploy notes on `master` do not risk the collision that per-branch root files would:
+they sit in per-name directories, and `master` is never composed into a stock tree.
 
 ### Branches are based on `upstream/master`, not on `master`
 

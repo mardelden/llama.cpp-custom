@@ -21,7 +21,7 @@ git fetch upstream
 
 # sanity check: master must carry NOTHING but our local docs
 git diff --name-only upstream/master..master
-#   expected: only plans/**, .claude/** and DEPLOYMENT-BRANCHES.md
+#   expected: only plans/**, .claude/**, overlays/**/DEPLOY.md, DEPLOYMENT-BRANCHES.md
 #   anything else means work landed on master by mistake - move it to a branch first
 
 git switch master && git rebase upstream/master
@@ -101,6 +101,11 @@ git apply --check my-thing.patch
   overlay is added - both file overlap and an actual sequential `git apply`.
 - **Document each set in `overlays/<name>/README.md`** on its own branch. Never at
   the repo root: every branch would claim the same path and collide when composed.
+- **Deploy notes go on `master`**, at `overlays/<name>/DEPLOY.md`. Their audience
+  never checks out the branch, so a note that only exists there is findable only by
+  someone who already knows the branch name. Keeping them on `master` also makes
+  them structurally unable to reach a stock tree. No collision risk: they sit in
+  per-name directories and `master` is never composed into a stock tree.
 - **Index them in `DEPLOYMENT-BRANCHES.md` on `master`.** That file is the entry
   point for anyone consuming the fork. It is an index; the per-set manifest wins on
   conflict.
