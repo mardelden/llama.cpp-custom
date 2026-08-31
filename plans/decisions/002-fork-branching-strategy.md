@@ -60,8 +60,12 @@ committed to `master`. Rebasing gives that up - it will happily replay a stray c
 Substitute check before syncing:
 
 ```bash
-git diff --name-only upstream/master..master   # must list ONLY plans/
+git diff --name-only upstream/master..master   # must list ONLY plans/ and .claude/
 ```
+
+(Superseded scope: `.claude/` was added in
+[`003-workflow-as-repo-skill.md`](003-workflow-as-repo-skill.md). The operational copy of
+this loop lives in `.claude/skills/fork-workflow/SKILL.md`.)
 
 ## Alternatives Considered
 
@@ -84,7 +88,7 @@ git diff --name-only upstream/master..master   # must list ONLY plans/
 
   ```bash
   git fetch upstream
-  git diff --name-only upstream/master..master   # sanity: must list ONLY plans/
+  git diff --name-only upstream/master..master   # sanity: ONLY plans/ and .claude/
   git switch master && git rebase upstream/master
   git push --force-with-lease origin master
   ```

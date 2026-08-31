@@ -261,7 +261,7 @@ because those commits touch only `plans/`, a path upstream does not use.
 Before syncing, confirm nothing else drifted onto `master`:
 
 ```bash
-git diff --name-only upstream/master..master   # must list ONLY plans/
+git diff --name-only upstream/master..master   # must list ONLY plans/ and .claude/
 ```
 
 All real work belongs on topic branches - see `decisions/002-fork-branching-strategy.md`.
