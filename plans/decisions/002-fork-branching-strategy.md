@@ -76,8 +76,18 @@ git diff --name-only upstream/master..master   # must list ONLY plans/
 - Syncing is `git fetch upstream && git switch master && git rebase upstream/master`.
   Before syncing, verify `git diff --name-only upstream/master..master` lists only `plans/`.
 - Because `plans/` lives on `master`, the fork's own commits get new SHAs on every rebase.
-  That is harmless here (nobody builds on them), but it means a force-push to `origin`
-  after each sync - a **human action**, never an agent's.
+  `origin` already holds the old SHAs, so each sync needs
+  `git push --force-with-lease origin master`. Use `--force-with-lease`, never plain
+  `--force`: it refuses the push if `origin` moved since the last fetch, which turns a
+  silent overwrite into a visible error.
+- The full steady-state loop:
+
+  ```bash
+  git fetch upstream
+  git diff --name-only upstream/master..master   # sanity: must list ONLY plans/
+  git switch master && git rebase upstream/master
+  git push --force-with-lease origin master
+  ```
 - Topic branches need rebasing after each sync. Given the pace upstream moves (2400 commits
   between two arbitrary points), branches should be kept short-lived.
 - `plans/` must be rebased along with everything else if it is ever moved off `master`.
