@@ -15,9 +15,12 @@ branch and is updated alongside the code.
 
 ## Branches
 
-| Branch | Scope | Activation | Rebuild? | Manifest |
-|---|---|---|---|---|
-| `feat/prompt-log-capture` | fleet-wide, inert unless activated | `--log-prompts-dir PATH` (off by default) | **yes** - C++ | [`overlays/prompt-log-capture/README.md`](https://github.com/mardelden/llama.cpp-custom/blob/feat/prompt-log-capture/overlays/prompt-log-capture/README.md) |
+| Branch | Scope | Activation | Rebuild? | Manifest | Deploy note |
+|---|---|---|---|---|---|
+| `feat/prompt-log-capture` | fleet-wide, inert unless activated | `--log-prompts-dir PATH` (off by default) | **yes** - C++ | [README](https://github.com/mardelden/llama.cpp-custom/blob/feat/prompt-log-capture/overlays/prompt-log-capture/README.md) | [DEPLOY](https://github.com/mardelden/llama.cpp-custom/blob/feat/prompt-log-capture/overlays/prompt-log-capture/DEPLOY.md) |
+
+**Deploying?** Read the deploy note for the branch you are shipping. It is written
+to stand alone - you do not need this file or anything else in the fork.
 
 ### `feat/prompt-log-capture`
 
@@ -32,6 +35,10 @@ prompt-only file named after the current millisecond.
 - **Removal condition:** upstream ships equivalent capture, the agent-ledger
   inference adapter is retired, or capture moves outside the server.
 - **Design rationale:** `plans/001-prompt-log-capture.md` on this branch.
+- **Not for continuous use yet.** The archive meant to drain the log directory does
+  not exist, so permanent capture means unbounded plaintext growth on a serving
+  host. A time-boxed run with a quota and a scheduled disable is the current ask -
+  see the deploy note.
 
 Carries an upstream bug fix as a side effect: two requests arriving in the same
 millisecond previously resolved to the same filename and the second silently
