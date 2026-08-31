@@ -371,7 +371,6 @@ json server_task_result_cmpl_final::to_json_log() {
         {"index",                  index},
         {"content",                full_content},
         {"model",                  oaicompat_model},
-        {"prompt",                 prompt},
         {"tokens_predicted",       n_decoded},
         {"tokens_evaluated",       n_prompt_tokens},
         {"tokens_cached",          n_tokens_cached},
@@ -386,6 +385,12 @@ json server_task_result_cmpl_final::to_json_log() {
     // reasoning and tool calls live on the parsed message, not on content
     if (!oaicompat_msg.empty()) {
         res["message"] = oaicompat_msg.to_json_oaicompat();
+    }
+
+    // the prompt is already recorded in the paired .req file, and it dominates the size of
+    // both records - only repeat it when the slot actually served something different
+    if (truncated) {
+        res["prompt"] = prompt;
     }
 
     return res;
