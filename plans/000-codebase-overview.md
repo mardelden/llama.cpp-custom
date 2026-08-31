@@ -2,7 +2,7 @@
 
 **Status:** Implemented
 **Date:** 2026-08-30
-**Snapshot:** `9723942ad` (synced to `upstream/master`, 0 ahead / 0 behind)
+**Snapshot:** `9723942ad` (synced to `upstream/master`; `master` is 2 ahead, `plans/` only)
 
 > This file exists because `CLAUDE.md` and `AGENTS.md` are both upstream-owned in this
 > fork and must stay byte-identical to upstream. See
@@ -17,11 +17,11 @@ inference for LLMs, built on the `ggml` tensor library.
 |---|---|
 | `origin` | `git@github.com:mardelden/llama.cpp-custom.git` |
 | `upstream` | `git@github.com:ggml-org/llama.cpp.git` (push disabled) |
-| Divergence | **0 ahead, 0 behind** - clean mirror, synced 2026-08-30 |
+| Divergence | Synced 2026-08-30. **2 ahead** (`plans/` docs only), 0 behind |
 | Language | C11 / C++17, CMake build |
 
-**There are currently no local modifications.** Everything below describes upstream
-llama.cpp at `9723942ad`.
+**There are no local modifications to upstream code** - the only local commits add `plans/`.
+Everything below describes upstream llama.cpp at `9723942ad`.
 
 ## AI usage policy (read this first)
 
@@ -250,12 +250,21 @@ wrappers), `ggml/include/ggml.h` + `ggml-backend.h`.
 ## Fork maintenance
 
 ```bash
-git fetch upstream && git merge --ff-only upstream/master
+git fetch upstream
+git switch master && git rebase upstream/master
 ```
 
-`--ff-only` is deliberate: it fails loudly rather than creating a merge commit if local
-commits ever appear. `plans/` is untracked and upstream has no such path, so it never
-collides.
+Rebase rather than `--ff-only`: `master` carries the `plans/` commits, so it is not an
+ancestor of `upstream/master` and a fast-forward is impossible. The rebase is conflict-free
+because those commits touch only `plans/`, a path upstream does not use.
+
+Before syncing, confirm nothing else drifted onto `master`:
+
+```bash
+git diff --name-only upstream/master..master   # must list ONLY plans/
+```
+
+All real work belongs on topic branches - see `decisions/002-fork-branching-strategy.md`.
 
 ## Adding a new model
 

@@ -28,30 +28,40 @@ All changes go on topic branches, rebased onto `master` after each sync:
 git switch -c feat/my-thing
 # ... commits ...
 
-# sync (always a fast-forward, fails loudly if not)
+# sync master (rebase, NOT --ff-only - see below)
 git fetch upstream
-git switch master && git merge --ff-only upstream/master
+git switch master && git rebase upstream/master
 
 # replay work on top
 git switch feat/my-thing && git rebase master
 ```
 
-`--ff-only` is deliberate: it **fails** rather than silently creating a merge commit if
-`master` ever diverges. That failure is the signal that something was committed to `master`
-by mistake.
+### Single exception: `plans/`, and what it costs
 
-### Single exception: `plans/`
+`plans/` is committed to `master` (commits `a2b5dc54d`, `f8194c080`), making it 2 ahead of
+upstream. This is accepted because upstream has no `plans/` path, so the *content* can never
+conflict, and the alternative (untracked + `.git/info/exclude`) loses the docs on any reclone.
 
-`plans/` is committed to `master` (commit `a2b5dc54d`), making it technically 1 ahead of
-upstream. This is accepted because:
+**But it does break `--ff-only`.** A fast-forward requires `master` to be an *ancestor* of
+the target commit. That is a property of the commit graph, not of which files changed - so
+any local commit, even on a path upstream never touches, disqualifies it:
 
-- Upstream has no `plans/` path and never will, so it cannot collide
-- `git merge --ff-only` still succeeds - a fast-forward only requires that `master` is an
-  ancestor of the target, which one commit on a disjoint path does not prevent
-- The alternative (untracked + `.git/info/exclude`) loses the docs on any reclone
+```
+$ git merge-base --is-ancestor master upstream/master
+# exit 1 -> master is NOT an ancestor -> `git merge --ff-only` fails
+```
 
-If `plans/` ever *does* start conflicting, that is the signal upstream added the path, and
-this exception should be revisited.
+So the sync command is **`git rebase upstream/master`**, which replays the `plans/` commits
+on top of the new upstream head. Because those commits touch only `plans/`, the rebase is
+conflict-free by construction.
+
+The tradeoff: `--ff-only` was going to serve as a tripwire that catches work accidentally
+committed to `master`. Rebasing gives that up - it will happily replay a stray commit too.
+Substitute check before syncing:
+
+```bash
+git diff --name-only upstream/master..master   # must list ONLY plans/
+```
 
 ## Alternatives Considered
 
@@ -59,12 +69,15 @@ this exception should be revisited.
 |---|---|---|---|
 | **Commit to `master` directly** | Simplest day to day; no branch juggling | `master` diverges permanently. Every future sync becomes a merge or rebase with real conflict potential; `--ff-only` stops working as a safety net | Trades a permanent, compounding cost for a small convenience |
 | **Patch series** (`git format-patch` / stgit) | Maximum portability; changes fully decoupled from history | Manual apply/refresh on every sync; no branch tooling; no CI | Portability we do not need - `origin` already exists as the durable store |
-| **Topic branches, `master` pristine** | Sync is always one command; conflicts only where work genuinely overlaps upstream; mistakes surface immediately via `--ff-only` | Requires remembering to branch before starting | **Chosen** |
+| **Topic branches, `master` near-pristine** | Sync is one command; conflicts only where work genuinely overlaps upstream | Requires remembering to branch before starting; `plans/` on `master` costs the `--ff-only` tripwire | **Chosen** |
 
 ## Consequences
 
-- Syncing stays `git fetch upstream && git merge --ff-only upstream/master`. If that ever
-  fails, something was committed to `master` - fix it rather than working around it.
+- Syncing is `git fetch upstream && git switch master && git rebase upstream/master`.
+  Before syncing, verify `git diff --name-only upstream/master..master` lists only `plans/`.
+- Because `plans/` lives on `master`, the fork's own commits get new SHAs on every rebase.
+  That is harmless here (nobody builds on them), but it means a force-push to `origin`
+  after each sync - a **human action**, never an agent's.
 - Topic branches need rebasing after each sync. Given the pace upstream moves (2400 commits
   between two arbitrary points), branches should be kept short-lived.
 - `plans/` must be rebased along with everything else if it is ever moved off `master`.
