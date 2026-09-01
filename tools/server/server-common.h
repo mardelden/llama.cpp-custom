@@ -317,6 +317,8 @@ struct server_chat_params {
     std::string reasoning_budget_message;
     std::string media_path;
     bool force_pure_content = false;
+    // accepted reasoning_effort values; empty = accept anything
+    std::vector<std::string> reasoning_effort_levels;
 };
 
 // used by /completions endpoint

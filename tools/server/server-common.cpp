@@ -9,6 +9,7 @@
 
 #include "server-common.h"
 
+#include <algorithm>
 #include <random>
 #include <sstream>
 #include <fstream>
@@ -1326,8 +1327,45 @@ json oaicompat_chat_params_parse(
         if (reasoning_effort == "none") {
             inputs.enable_thinking = false;
             inputs.chat_template_kwargs.erase("reasoning_effort");
+            // "none" never reaches the template, so check it here rather than below.
+            // a model that always thinks cannot honor it; rejecting beats silently
+            // thinking anyway while the caller believes thinking is off
+            if (!opt.reasoning_effort_levels.empty() &&
+                    std::find(opt.reasoning_effort_levels.begin(), opt.reasoning_effort_levels.end(),
+                        "none") == opt.reasoning_effort_levels.end()) {
+                throw std::invalid_argument(
+                    "reasoning_effort: 'none' is not supported by this model. Supported levels: " +
+                    string_join(opt.reasoning_effort_levels, ", "));
+            }
         } else if (!reasoning_effort.empty()) {
             inputs.chat_template_kwargs["reasoning_effort"] = json(reasoning_effort).dump();
+        }
+    }
+
+    // Every way a client can set reasoning_effort converges in the kwargs map by this
+    // point: the field above, chat_template_kwargs in the body, the Responses API
+    // reasoning.effort, converted Anthropic requests, and the server-side default.
+    // Chat templates commonly fold an unknown level to a fallback instead of raising,
+    // which silently misleads the caller, so when the accepted set is declared, reject
+    // anything outside it - verbatim passthrough or an error, never a remap.
+    if (!opt.reasoning_effort_levels.empty()) {
+        const auto it = inputs.chat_template_kwargs.find("reasoning_effort");
+        if (it != inputs.chat_template_kwargs.end()) {
+            std::string effort = it->second;
+            try {
+                const json parsed = json::parse(effort);
+                if (parsed.is_string()) {
+                    effort = parsed.get<std::string>();
+                }
+            } catch (const std::exception &) {
+                // not JSON-encoded; compare the raw value
+            }
+            if (std::find(opt.reasoning_effort_levels.begin(), opt.reasoning_effort_levels.end(),
+                    effort) == opt.reasoning_effort_levels.end()) {
+                throw std::invalid_argument(
+                    "reasoning_effort: unsupported level '" + effort + "'. Supported levels: " +
+                    string_join(opt.reasoning_effort_levels, ", "));
+            }
         }
     }
 

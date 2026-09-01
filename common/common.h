@@ -658,6 +658,11 @@ struct common_params {
 
     std::map<std::string, std::string> default_template_kwargs;
 
+    // accepted values for reasoning_effort; empty = accept anything (stock behavior)
+    // set this to the levels the model's chat template actually distinguishes, so a level
+    // the template would silently fold to its fallback is rejected instead
+    std::vector<std::string> reasoning_effort_levels;
+
     // CLI params
     std::string server_base; // if set, connect to this server instead of starting a new one
 

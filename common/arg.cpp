@@ -3726,6 +3726,20 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
         }
     ).set_examples({LLAMA_EXAMPLE_SERVER, LLAMA_EXAMPLE_COMPLETION, LLAMA_EXAMPLE_CLI}).set_env("LLAMA_ARG_REASONING_EFFORT"));
     add_opt(common_arg(
+        {"--reasoning-effort-levels"}, "LEVELS",
+        "comma-separated reasoning_effort values the loaded model's chat template actually distinguishes;\n"
+        "requests with any other value are rejected instead of being silently folded to the template's\n"
+        "fallback. include 'none' only if the model can disable thinking. (default: empty = accept anything)",
+        [](common_params & params, const std::string & value) {
+            params.reasoning_effort_levels.clear();
+            for (const auto & level : string_split<std::string>(value, ',')) {
+                if (!level.empty()) {
+                    params.reasoning_effort_levels.push_back(level);
+                }
+            }
+        }
+    ).set_examples({LLAMA_EXAMPLE_SERVER}).set_env("LLAMA_ARG_REASONING_EFFORT_LEVELS"));
+    add_opt(common_arg(
         {"--reasoning-budget"}, "N",
         "token budget for thinking: -1 for unrestricted, 0 for immediate end, N>0 for token budget (default: -1)",
         [](common_params & params, int value) {
