@@ -18,8 +18,22 @@ hard disk quota and a scheduled disable so it cannot outlive the experiment, plu
 two or three sample files and a rough bytes-per-hour figure. Details in
 [Time-boxed run](#time-boxed-run) below.
 
-Capture is off unless you pass the flag, so deploying the build itself is safe.
-Deploying the binary and *not* switching it on is a valid and expected outcome.
+Capture is off unless the flag is set, so deploying the build itself is safe.
+Deploying the binary and *not* switching capture on is a valid and expected outcome.
+
+### Current state on this fleet (2026-09-01)
+
+Two things differ from the above, both worth a decision:
+
+- **`llamacpp_log_requests: true`** is set in `inventory/host_vars/llamacpp/vars.yml`,
+  so capture is on continuously. There is no scheduled disable and nothing prunes.
+  That is the situation this note asks you to avoid; either add a disable, or accept
+  it knowingly with the runway table below in view.
+- **The deployed patch is stale.** `roles/llamacpp/files/patches/prompt-log-capture.patch`
+  is 322 lines and predates the fix that stopped writing the prompt into *both* files.
+  It therefore uses roughly **twice** the disk the table below predicts. Refresh it
+  (command under "How this is delivered here") and rebuild before drawing volume
+  conclusions from a run.
 
 ---
 
@@ -61,66 +75,71 @@ fills, capture stops and inference continues.
 
 ## Getting the code
 
-Repo: `git@github.com:mardelden/llama.cpp-custom.git`
-Branch: `feat/prompt-log-capture`
-
-Four files change, about 209 lines:
+Six files change, about 327 lines:
 
 ```
-common/arg.cpp
-tools/server/server-context.cpp
-tools/server/server-task.cpp
-tools/server/server-task.h
+common/arg.cpp                    directory mode + help text
+tools/server/server-context.cpp   write helper, request record, response hook
+tools/server/server-task.cpp      to_json_log()
+tools/server/server-task.h        declaration
+tools/cli/README.md               regenerated args table
+tools/server/README.md            regenerated args table + Request logging section
 ```
 
-### Option A - build the branch directly
+Source of truth: `git@github.com:mardelden/llama.cpp-custom.git`, branch
+`feat/prompt-log-capture`.
 
-```bash
-git clone git@github.com:mardelden/llama.cpp-custom.git
-cd llama.cpp-custom
-git switch feat/prompt-log-capture
+### How this is delivered here (the ansible path)
+
+The fleet does not track this fork. `roles/llamacpp` clones
+`unslothai/llama.cpp` at branch `glm5next/upstream` (needed for GLM-5.3-Flash,
+which upstream master does not support) and applies source patches after clone,
+before cmake:
+
+```
+roles/llamacpp/files/patches/
+  anthropic-output-config-effort.patch
+  prompt-log-capture.patch          <- this overlay
 ```
 
-The branch is based on upstream `9723942ad` (2026-08-30). It is not a fork of
-llama.cpp with other changes - it is stock upstream at that commit plus these
-four files.
-
-### Option B - apply as a patch to your own upstream checkout
-
-Preferred if you pin a specific upstream revision.
+That is the right mechanism - keep using it. To refresh the patch file after a
+change on our side:
 
 ```bash
 # from a clone of this fork
 BASE=$(git merge-base upstream/master feat/prompt-log-capture)
-git diff "$BASE"..feat/prompt-log-capture -- . ':(exclude)overlays/' > prompt-log-capture.patch
+git diff "$BASE"..feat/prompt-log-capture -- . ':(exclude)overlays/' \
+  > roles/llamacpp/files/patches/prompt-log-capture.patch
 ```
 
-Then against your tree:
+The `':(exclude)overlays/'` matters: `overlays/` is fork documentation and must
+not reach a build tree.
+
+### Verified against the branch you actually build
+
+The patch applies cleanly to `unslothai/llama.cpp @ glm5next/upstream`
+(tip `949f7efb0`, 2026-08-31), and to stock `upstream/master`. It touches
+`common/arg.cpp` and three files under `tools/server/`, none of which the
+glm5next work modifies, so the two compose without interaction.
+
+**Check rather than assume**, on every base change:
 
 ```bash
-git apply --check prompt-log-capture.patch   # verify first, applies nothing
-git apply prompt-log-capture.patch
+git apply --check prompt-log-capture.patch   # verifies, applies nothing
 ```
 
-`--check` is not optional. If it fails, do not force it - see below.
+If that fails, the overlay needs rebasing on our side - come back to us rather
+than hand-resolving conflicts in a deployment tree.
 
-### If you deploy against a newer upstream
-
-The patch was verified to apply cleanly to upstream `daef7b687` (2026-08-31), one
-commit past its base. It touches `common/arg.cpp` and three files under
-`tools/server/`, so it will keep applying until upstream edits those specific
-regions - the server's completion handler and task-result serialisation.
-
-Upstream moves very fast (2400 commits between two arbitrary points in this repo's
-recent history), so **check, do not assume**:
+### Building it standalone, if you need to
 
 ```bash
-git apply --check prompt-log-capture.patch
+git clone git@github.com:mardelden/llama.cpp-custom.git
+cd llama.cpp-custom && git switch feat/prompt-log-capture
 ```
 
-If that fails, the overlay needs rebasing onto the newer upstream. That is a
-change to this fork, not something to resolve at deploy time - come back to us
-rather than hand-resolving conflicts in a deployment tree.
+That branch is stock `upstream/master` plus these six files - **no GLM-5.3
+support**. Only useful for isolating this change; it is not what the fleet runs.
 
 ---
 
@@ -141,8 +160,25 @@ and touches no ggml or backend code.
 
 ## Enabling capture
 
+In this fleet it is two ansible variables, not a hand-written flag:
+
+```yaml
+# inventory/group_vars/all/inference_logging.yml - fleet default, currently false
+inference_log_requests: false
+
+# inventory/host_vars/llamacpp/vars.yml - the per-host opt-in
+llamacpp_log_requests: true
+```
+
+The role turns that into `--log-prompts-dir {{ inference_log_dir }}`, which is the
+`/var/log/inference` bind mount, backed by the dedicated `nvme-vg/inference-logs`
+LV on `pve-ai`. Carrying the patch does **not** enable capture - that needs the
+variable, and it needs a rebuild for the patch itself.
+
+Directly, the equivalent is:
+
 ```bash
-llama-server -m <model> --log-prompts-dir /var/log/llama-prompts
+llama-server -m <model> --log-prompts-dir /var/log/inference
 ```
 
 The directory is created if missing, mode `0700`. Records are written `0600`.
@@ -150,7 +186,10 @@ That is deliberate and set explicitly rather than left to umask - these files
 contain fully assembled prompts, including system prompts and any source code
 pulled into context. They are the most sensitive content the server handles.
 
-### Put it on its own filesystem
+### It is already on its own filesystem - keep it that way
+
+`/var/log/inference` is backed by the dedicated `nvme-vg/inference-logs` LV, which
+is the right shape. This section is here so it does not get consolidated later.
 
 This is the load-bearing operational decision.
 
@@ -225,14 +264,18 @@ rather than left to umask.
 
 What is actually being asked for right now.
 
+The directory already exists as a bind mount on its own LV, so there is nothing to
+create. Toggle capture with the ansible variable rather than editing unit files:
+
 ```bash
-# dedicated, quota'd location
-sudo mkdir -p /var/log/llama-prompts
-sudo chown llama:llama /var/log/llama-prompts
-sudo chmod 0700 /var/log/llama-prompts
+# enable for a run
+just llamacpp-configure                       # with llamacpp_log_requests: true
+
+# stop capture
+ansible-playbook playbooks/15-llamacpp.yml -e inference_log_requests=false
 ```
 
-Start `llama-server` with `--log-prompts-dir /var/log/llama-prompts`, run about an
+Start `llama-server` with `--log-prompts-dir /var/log/inference`, run about an
 hour of real traffic, then **stop capture** by restarting without the flag.
 
 Schedule the disable up front so it cannot outlive the experiment - a `systemd`
@@ -243,24 +286,25 @@ Then report back:
 
 ```bash
 # size
-du -sh /var/log/llama-prompts
+du -sh /var/log/inference
 
 # file count - report this, not just bytes
-find /var/log/llama-prompts -type f | wc -l
+find /var/log/inference -type f | wc -l
 
 # inode headroom on that filesystem
-df -i /var/log/llama-prompts
+df -i /var/log/inference
 
 # bytes per request
-bytes=$(du -sk /var/log/llama-prompts | cut -f1)
-reqs=$(find /var/log/llama-prompts -name '*.req.json' | wc -l)
+bytes=$(du -sk /var/log/inference | cut -f1)
+reqs=$(find /var/log/inference -name '*.req.json' | wc -l)
 echo "$(( bytes / reqs )) KB per request, over $reqs requests"
 ```
 
 ### Sizing, for the reported target
 
 You reported **ext4 with 6,553,600 inodes**. At ext4's default ratio of one inode per
-16 KiB that implies a **100 GiB** filesystem, which settles the question:
+16 KiB that implies a **100 GiB** filesystem - which matches the `nvme-vg/inference-logs`
+LV backing `/var/log/inference`. That settles the question:
 
 **Space runs out long before inodes do.** The crossover is 32 KB per request pair -
 below that inodes bind first, above it space does. These records are far above it.
@@ -312,7 +356,7 @@ permanently.
 After the first request:
 
 ```bash
-find /var/log/llama-prompts -type d -exec ls -ld {} \;
+find /var/log/inference -type d -exec ls -ld {} \;
 ```
 
 Expect every directory `drwx------`, records `-rw-------`, laid out as
@@ -320,12 +364,12 @@ Expect every directory `drwx------`, records `-rw-------`, laid out as
 
 ```bash
 # every record is valid JSON
-find /var/log/llama-prompts -name '*.json' | while read -r f; do
+find /var/log/inference -name '*.json' | while read -r f; do
   python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$f" || echo "INVALID: $f"
 done
 
 # every request has at least one response (pairs share a directory)
-find /var/log/llama-prompts -name '*.req.json' | while read -r r; do
+find /var/log/inference -name '*.req.json' | while read -r r; do
   d=$(dirname "$r"); id=$(basename "$r" .req.json)
   n=$(ls "$d/$id".res.*.json 2>/dev/null | wc -l)
   [ "$n" -eq 0 ] && echo "UNPAIRED: $id"
@@ -334,7 +378,7 @@ done
 # completions are actually populated
 python3 - <<'PY'
 import json, glob
-for f in sorted(glob.glob('/var/log/llama-prompts/*/*/*.res.*.json')):
+for f in sorted(glob.glob('/var/log/inference/*/*/*.res.*.json')):
     d = json.load(open(f))['response']
     print(f.split('/')[-1], '->', repr(d['content'][:60]))
 PY
@@ -422,6 +466,12 @@ Verified by the author on macOS with a tiny test model (`stories260K`), covering
 **Not yet verified:** Linux, CUDA builds, production models, real concurrency, or
 sustained load. Treat the time-boxed run as the first real test, and check the
 pairing and volume numbers before drawing conclusions from the data.
+
+Note the fleet runs this on `unslothai/llama.cpp @ glm5next/upstream` serving
+GLM-5.3-Flash, not on the stock upstream this was exercised against. The patch
+applies cleanly there and touches no code the glm5next work modifies, but "applies
+and compiles" is not "behaves identically" - a first run on that base is worth
+checking on its own terms.
 
 One bug was found during that testing and fixed: in streaming mode the naive
 implementation recorded an **empty completion for every streamed request**. If you
