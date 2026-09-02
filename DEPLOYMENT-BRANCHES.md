@@ -18,6 +18,7 @@ branch and is updated alongside the code.
 | Branch | Scope | Activation | Rebuild? | Manifest | Deploy note |
 |---|---|---|---|---|---|
 | `feat/prompt-log-capture` | fleet-wide, inert unless activated | `--log-prompts-dir PATH` (off by default) | **yes** - C++ | [manifest](https://github.com/mardelden/llama.cpp-custom/blob/feat/prompt-log-capture/overlays/prompt-log-capture/README.md) (on branch) | [`overlays/prompt-log-capture/DEPLOY.md`](overlays/prompt-log-capture/DEPLOY.md) |
+| `feat/reasoning-effort-allowlist` | fleet-wide, inert unless activated | `--reasoning-effort-levels a,b,c` (off by default) | **yes** - C++ | [manifest](https://github.com/mardelden/llama.cpp-custom/blob/feat/reasoning-effort-allowlist/overlays/reasoning-effort-allowlist/README.md) (on branch) | carried as `reasoning-effort-allowlist.patch` in the proxmox `llamacpp` role |
 
 **Deploying?** Read the deploy note for the branch you are shipping. Deploy notes
 live here on `master`, under `overlays/<name>/DEPLOY.md`, so you can find one
@@ -46,6 +47,42 @@ Carries an upstream bug fix as a side effect: two requests arriving in the same
 millisecond previously resolved to the same filename and the second silently
 truncated the first. That part is genuinely upstreamable on its own and could be
 split from the record-format change to keep the carried surface smaller.
+
+### `feat/reasoning-effort-allowlist`
+
+Adds `--reasoning-effort-levels`, a declared vocabulary of `reasoning_effort` values
+the deployed model's chat template actually distinguishes. Requests carrying any
+other value get a 400 naming the supported levels, instead of the template silently
+folding them to its fallback (GLM-5.3's template folds anything unknown to `max`,
+its most expensive setting). Enforced at the single pre-template choke point, so it
+covers every client surface at once: OAI top-level field, `chat_template_kwargs`,
+Responses API `reasoning.effort`, converted Anthropic requests, and the server-side
+default.
+
+- **Base:** `upstream/master` at `3466812d1` - about 129 patch lines, 5 files
+- **Activation:** in the fleet, the profile key `reasoning_efforts: [low, high, max]`
+  renders the flag; no key = stock passthrough
+- **Verified:** stories260K on the branch (nine cases), then live on the fleet host
+  across OAI chat, Responses and Anthropic surfaces
+- **Known accepted gap:** `chat_template_kwargs {enable_thinking: false}` is not
+  gated and GLM's template ignores it (measured byte-identical to `max`). Recorded
+  on the profile in the proxmox role, with the revisit trigger.
+- **Removal condition:** upstream grows an equivalent declared-vocabulary rejection
+
+### Patch-only overlays (no fork branch)
+
+The proxmox `llamacpp` role carries two more source patches that have no branch
+here, listed so this index reflects everything the fleet actually applies:
+
+- `anthropic-output-config-effort.patch` - maps Anthropic `output_config.effort`
+  onto `chat_template_kwargs.reasoning_effort`, mapping only; validation happens in
+  the allowlist above
+- `cuda-moe-fusion-specdec.patch` - cherry-pick of upstream `41ef91f7c`, measured
+  flat on this fleet and retained deliberately; see the patch header for the
+  removal condition
+
+Their headers in `roles/llamacpp/files/patches/` are the authoritative
+documentation.
 
 ## Working with overlays
 
